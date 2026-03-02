@@ -6,7 +6,7 @@
 - high performance via flyweight access patterns,
 - strong NumPy interoperability.
 
-This repository currently contains **Phase 0-5 foundations**:
+This repository currently contains **Phase 0-6 foundations**:
 
 - package structure,
 - CLI entry points,
@@ -14,6 +14,7 @@ This repository currently contains **Phase 0-5 foundations**:
 - IR model, generator, and traversal helpers,
 - runtime buffer/primitive/flyweight foundations with NumPy zero-copy adapters,
 - IR-driven Python code emission including groups, nested groups, var-data, and version gating,
+- Java cross-language interop workflow and fixture parity integration test,
 - fixture management utilities,
 - lint/test/type-check tooling.
 

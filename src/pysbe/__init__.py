@@ -8,6 +8,13 @@ from pysbe.fixtures import (
     sync_fixture_manifest,
 )
 from pysbe.generate import GeneratedArtifact, generate, generate_ir_file
+from pysbe.interop import (
+    DEFAULT_JAVA_INTEROP_VALUES,
+    JavaInteropUnavailable,
+    encode_fixture_with_java,
+    find_java_prerequisites,
+    verify_payload_with_java,
+)
 from pysbe.ir import (
     Encoding,
     IrSchema,
@@ -55,8 +62,10 @@ __all__ = [
     "BufferTypeError",
     "CompositeFlyweight",
     "CursorStateError",
+    "DEFAULT_JAVA_INTEROP_VALUES",
     "EnumValueDef",
     "Encoding",
+    "JavaInteropUnavailable",
     "FieldDef",
     "Flyweight",
     "GeneratedArtifact",
@@ -80,6 +89,8 @@ __all__ = [
     "collect_groups",
     "collect_var_data",
     "ensure_fixture_layout",
+    "encode_fixture_with_java",
+    "find_java_prerequisites",
     "generate",
     "generate_ir",
     "generate_ir_file",
@@ -91,6 +102,7 @@ __all__ = [
     "read_vardata",
     "sync_fixture_manifest",
     "to_numpy_uint8",
+    "verify_payload_with_java",
     "view_primitive_array",
     "write_primitive",
     "write_vardata",

@@ -27,6 +27,9 @@ pysbe = "pysbe.cli:entrypoint"
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = [
+  "integration: cross-language integration tests (may require external toolchains)",
+]
 
 [tool.ruff]
 target-version = "py311"

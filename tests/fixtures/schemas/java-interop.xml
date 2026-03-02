@@ -1,0 +1,20 @@
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="interop"
+    id="501"
+    version="0"
+    byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+
+  <sbe:message name="InteropMessage" id="1">
+    <field name="seqNum" id="1" type="uint64"/>
+    <field name="qty" id="2" type="uint32"/>
+    <field name="price" id="3" type="int64"/>
+  </sbe:message>
+</sbe:messageSchema>
