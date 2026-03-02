@@ -6,7 +6,7 @@
 - high performance via flyweight access patterns,
 - strong NumPy interoperability.
 
-This repository currently contains **Phase 0-6 foundations**:
+This repository currently contains **Phase 0-7 foundations**:
 
 - package structure,
 - CLI entry points,
@@ -15,6 +15,7 @@ This repository currently contains **Phase 0-6 foundations**:
 - runtime buffer/primitive/flyweight foundations with NumPy zero-copy adapters,
 - IR-driven Python code emission including groups, nested groups, var-data, and version gating,
 - Java cross-language interop workflow and fixture parity integration test,
+- benchmark harness with baseline regression guardrails,
 - fixture management utilities,
 - lint/test/type-check tooling.
 
@@ -41,6 +42,13 @@ python -m mypy src
 
 # cli help
 python -m pysbe --help
+
+# run benchmarks
+python benchmarks/run_benchmarks.py
+python scripts/check_perf_regression.py \
+  --baseline benchmarks/results/baseline.json \
+  --current benchmarks/results/latest.json \
+  --max-regression-factor 1.35
 ```
 
 ## CLI (Phase 0)

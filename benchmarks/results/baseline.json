@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-03-02T20:09:20.408212+00:00",
+  "machine": {
+    "platform": "Linux-6.12.57+deb13-amd64-x86_64-with-glibc2.41",
+    "processor": "",
+    "python": "3.13.5"
+  },
+  "results": {
+    "decode_only": {
+      "elapsed_ms": 113.656883,
+      "iterations": 7000.0,
+      "msg_per_sec": 61588.878871506626,
+      "ns_per_op": 16236.69757142857
+    },
+    "encode_only": {
+      "elapsed_ms": 112.816281,
+      "iterations": 6000.0,
+      "msg_per_sec": 53183.81307038476,
+      "ns_per_op": 18802.7135
+    },
+    "group_heavy": {
+      "elapsed_ms": 228.163295,
+      "iterations": 2000.0,
+      "msg_per_sec": 8765.65181091025,
+      "ns_per_op": 114081.6475
+    },
+    "round_trip": {
+      "elapsed_ms": 171.837187,
+      "iterations": 5000.0,
+      "msg_per_sec": 29097.310583884264,
+      "ns_per_op": 34367.4374
+    },
+    "vardata_heavy": {
+      "elapsed_ms": 81.02923,
+      "iterations": 2500.0,
+      "msg_per_sec": 30853.063764767357,
+      "ns_per_op": 32411.692
+    }
+  },
+  "schema": "benchmarks/schemas/phase7-benchmark.xml"
+}

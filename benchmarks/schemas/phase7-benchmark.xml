@@ -1,0 +1,38 @@
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="perf"
+    id="7001"
+    version="2"
+    byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="VarString">
+      <type name="length" primitiveType="uint8"/>
+      <type name="varData" primitiveType="char"/>
+    </composite>
+    <type name="Levels" primitiveType="uint32" length="4"/>
+  </types>
+
+  <sbe:message name="Trade" id="1">
+    <field name="seqNum" id="1" type="uint64"/>
+    <field name="qty" id="2" type="uint32"/>
+    <field name="price" id="3" type="int64"/>
+    <field name="levels" id="4" type="Levels"/>
+    <group name="legs" id="10">
+      <field name="px" id="1" type="int64"/>
+      <group name="tags" id="2">
+        <field name="code" id="1" type="uint16"/>
+      </group>
+      <data name="note" id="3" type="VarString"/>
+    </group>
+    <data name="text" id="20" type="VarString"/>
+  </sbe:message>
+</sbe:messageSchema>
