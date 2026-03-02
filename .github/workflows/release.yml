@@ -31,24 +31,6 @@ jobs:
           name: pysbe-dist
           path: dist/*
 
-  publish-pypi:
-    needs: build-dist
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-    permissions:
-      id-token: write
-    steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: pysbe-dist
-          path: dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-
   github-release:
     needs: build-dist
     if: startsWith(github.ref, 'refs/tags/v')
