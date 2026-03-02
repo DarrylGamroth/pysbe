@@ -48,6 +48,14 @@ def test_generate_ir_file_extracts_basic_metadata(tmp_path: Path) -> None:
             id="7"
             version="3"
             byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
           <sbe:message name="Ping" id="1"/>
           <sbe:message name="Pong" id="2"/>
         </sbe:messageSchema>

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pysbe.parser import parse_schema
 
 
 @dataclass(frozen=True)
@@ -27,23 +28,12 @@ def _sanitize_identifier(name: str) -> str:
     return cleaned
 
 
-def _derive_module_name(schema_root: ET.Element, schema_path: Path) -> str:
-    package_name = schema_root.attrib.get("package", "")
+def _derive_module_name(package_name: str, schema_path: Path) -> str:
     if package_name:
         parts = [part for part in re.split(r"[^A-Za-z0-9]+", package_name) if part]
         if parts:
             return _sanitize_identifier("".join(p.capitalize() for p in parts))
     return _sanitize_identifier(schema_path.stem.capitalize())
-
-
-def _load_schema_root(schema_path: Path) -> ET.Element:
-    try:
-        root = ET.parse(schema_path).getroot()
-    except ET.ParseError as exc:
-        raise ValueError(f"Invalid XML in schema {schema_path}: {exc}") from exc
-    if not root.tag.endswith("messageSchema"):
-        raise ValueError(f"Expected messageSchema root element, got {root.tag!r}")
-    return root
 
 
 def generate(
@@ -61,17 +51,17 @@ def generate(
     writes a deterministic placeholder module.
     """
 
-    del validate, warnings_fatal, suppress_warnings
-
     schema = Path(schema_path)
-    if not schema.is_file():
-        raise FileNotFoundError(f"Schema file not found: {schema}")
-
-    root = _load_schema_root(schema)
+    schema_def = parse_schema(
+        schema,
+        validate=validate,
+        warnings_fatal=warnings_fatal,
+        suppress_warnings=suppress_warnings,
+    )
     if module_name:
         resolved_module_name = _sanitize_identifier(module_name)
     else:
-        resolved_module_name = _derive_module_name(root, schema)
+        resolved_module_name = _derive_module_name(schema_def.package_name, schema)
 
     output_base = Path(output_dir)
     output_base.mkdir(parents=True, exist_ok=True)
@@ -110,23 +100,13 @@ def generate_ir_file(schema_path: str | Path) -> dict[str, Any]:
     """Return minimal schema metadata for Phase 0 CLI plumbing."""
 
     schema = Path(schema_path)
-    if not schema.is_file():
-        raise FileNotFoundError(f"Schema file not found: {schema}")
-
-    root = _load_schema_root(schema)
-    messages: list[str] = []
-    for child in root:
-        tag = child.tag.split("}")[-1]
-        if tag == "message":
-            name = child.attrib.get("name")
-            if name:
-                messages.append(name)
+    schema_def = parse_schema(schema)
 
     return {
         "schema_path": str(schema),
-        "package": root.attrib.get("package", ""),
-        "id": int(root.attrib.get("id", "0")),
-        "version": int(root.attrib.get("version", "0")),
-        "byte_order": root.attrib.get("byteOrder", "littleEndian"),
-        "messages": messages,
+        "package": schema_def.package_name,
+        "id": schema_def.id,
+        "version": schema_def.version,
+        "byte_order": schema_def.byte_order,
+        "messages": [message.name for message in schema_def.messages],
     }

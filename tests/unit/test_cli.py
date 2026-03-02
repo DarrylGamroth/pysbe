@@ -15,6 +15,14 @@ def _write_schema(path: Path) -> None:
             id="1"
             version="0"
             byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+          </types>
           <sbe:message name="Ping" id="1"/>
         </sbe:messageSchema>
         """.strip(),
