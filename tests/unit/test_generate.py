@@ -36,7 +36,9 @@ def test_generate_writes_placeholder_module(tmp_path: Path) -> None:
     assert artifact.module_name == "Baseline"
     assert artifact.output_path.is_file()
     content = artifact.output_path.read_text(encoding="utf-8")
-    assert "Phase 0 scaffold" in content
+    assert "class PingEncoder" in content
+    assert "class PingDecoder" in content
+    assert "class MessageHeaderEncoder" in content
 
 
 def test_generate_ir_file_extracts_basic_metadata(tmp_path: Path) -> None:

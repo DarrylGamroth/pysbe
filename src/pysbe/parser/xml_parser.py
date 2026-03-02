@@ -59,6 +59,24 @@ class TypeRef:
     """Reference to a type used by a field or composite member."""
 
     name: str
+    type_name: str
+    length: int = 1
+
+
+@dataclass(frozen=True)
+class EnumValueDef:
+    """Enum valid value entry."""
+
+    name: str
+    value: int
+
+
+@dataclass(frozen=True)
+class SetChoiceDef:
+    """Bitset choice entry."""
+
+    name: str
+    bit: int
 
 
 @dataclass(frozen=True)
@@ -68,7 +86,10 @@ class TypeDef:
     name: str
     kind: str
     primitive_type: str | None = None
+    length: int = 1
     members: tuple[TypeRef, ...] = ()
+    enum_values: tuple[EnumValueDef, ...] = ()
+    set_choices: tuple[SetChoiceDef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,20 +143,76 @@ def _parse_composite_members(
         names_seen.add(member_name)
 
         type_name = member.attrib.get("type")
+        length = _int_attrib(member, "length", 1, context, path)
         if member_tag == "type":
             type_name = member.attrib.get("primitiveType")
-        if member_tag == "ref":
-            type_name = member.attrib.get("type")
+            length = _int_attrib(member, "length", 1, context, path)
         if type_name is None:
             # In-schema nested type declarations can omit `type`; only keep refs we can resolve.
             continue
-        members.append(TypeRef(name=type_name))
+        members.append(TypeRef(name=member_name, type_name=type_name, length=length))
     return tuple(members)
+
+
+def _parse_enum_values(
+    node: ET.Element, context: ValidationContext, path: str
+) -> tuple[EnumValueDef, ...]:
+    values: list[EnumValueDef] = []
+    names_seen: set[str] = set()
+    numbers_seen: set[int] = set()
+    for child in node:
+        if _tag_name(child.tag) != "validValue":
+            continue
+        name = _required_attrib(child, "name", context, path)
+        if name in names_seen:
+            context.error(f"{path} contains duplicate enum validValue name {name!r}")
+        names_seen.add(name)
+        text = (child.text or "").strip()
+        if text == "":
+            context.error(f"{path}.validValue[{name}] must contain an integer value")
+        try:
+            value = int(text, 0)
+        except ValueError as exc:
+            context.error(f"{path}.validValue[{name}] must be integer, got {text!r}")
+            raise RuntimeError("unreachable") from exc
+        if value in numbers_seen:
+            context.warning(f"{path} contains duplicate enum numeric value {value}")
+        numbers_seen.add(value)
+        values.append(EnumValueDef(name=name, value=value))
+    return tuple(values)
+
+
+def _parse_set_choices(
+    node: ET.Element, context: ValidationContext, path: str
+) -> tuple[SetChoiceDef, ...]:
+    choices: list[SetChoiceDef] = []
+    names_seen: set[str] = set()
+    bits_seen: set[int] = set()
+    for child in node:
+        if _tag_name(child.tag) != "choice":
+            continue
+        name = _required_attrib(child, "name", context, path)
+        if name in names_seen:
+            context.error(f"{path} contains duplicate set choice name {name!r}")
+        names_seen.add(name)
+        text = (child.text or "").strip()
+        if text == "":
+            context.error(f"{path}.choice[{name}] must contain an integer bit position")
+        try:
+            bit = int(text, 0)
+        except ValueError as exc:
+            context.error(f"{path}.choice[{name}] must be integer, got {text!r}")
+            raise RuntimeError("unreachable") from exc
+        if bit in bits_seen:
+            context.warning(f"{path} contains duplicate set bit position {bit}")
+        bits_seen.add(bit)
+        choices.append(SetChoiceDef(name=name, bit=bit))
+    return tuple(choices)
 
 
 def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, TypeDef]:
     types_by_name: dict[str, TypeDef] = {
-        primitive: TypeDef(name=primitive, kind="primitive", primitive_type=primitive)
+        primitive: TypeDef(name=primitive, kind="primitive", primitive_type=primitive, length=1)
         for primitive in sorted(PRIMITIVE_TYPE_NAMES)
     }
     for types_node in root:
@@ -155,16 +232,37 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                 primitive_type = _required_attrib(
                     type_node, "primitiveType", context, f"types.{type_name}"
                 )
+                length = _int_attrib(type_node, "length", 1, context, f"types.{type_name}")
                 if primitive_type not in PRIMITIVE_TYPE_NAMES:
                     context.error(
                         f"types.{type_name} uses unknown primitiveType {primitive_type!r}"
                     )
+                if length <= 0:
+                    context.error(f"types.{type_name}.length must be >= 1")
                 type_def = TypeDef(
-                    name=type_name, kind=type_tag, primitive_type=primitive_type
+                    name=type_name,
+                    kind=type_tag,
+                    primitive_type=primitive_type,
+                    length=length,
                 )
             elif type_tag == "composite":
                 members = _parse_composite_members(type_node, context, f"types.{type_name}")
                 type_def = TypeDef(name=type_name, kind=type_tag, members=members)
+            elif type_tag == "enum":
+                encoding_type = _required_attrib(
+                    type_node, "encodingType", context, f"types.{type_name}"
+                )
+                if encoding_type not in PRIMITIVE_TYPE_NAMES:
+                    context.error(
+                        f"types.{type_name} uses unknown encodingType {encoding_type!r}"
+                    )
+                values = _parse_enum_values(type_node, context, f"types.{type_name}")
+                type_def = TypeDef(
+                    name=type_name,
+                    kind=type_tag,
+                    primitive_type=encoding_type,
+                    enum_values=values,
+                )
             else:
                 encoding_type = _required_attrib(
                     type_node, "encodingType", context, f"types.{type_name}"
@@ -173,8 +271,12 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                     context.error(
                         f"types.{type_name} uses unknown encodingType {encoding_type!r}"
                     )
+                choices = _parse_set_choices(type_node, context, f"types.{type_name}")
                 type_def = TypeDef(
-                    name=type_name, kind=type_tag, primitive_type=encoding_type
+                    name=type_name,
+                    kind=type_tag,
+                    primitive_type=encoding_type,
+                    set_choices=choices,
                 )
             types_by_name[type_name] = type_def
     return types_by_name

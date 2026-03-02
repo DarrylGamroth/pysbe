@@ -148,7 +148,7 @@ def _emit_type_tokens(
     for member in type_def.members:
         member_tokens = _emit_type_tokens(
             schema,
-            member.name,
+            member.type_name,
             byte_order=byte_order,
             type_cache=type_cache,
             active_types=active_types,

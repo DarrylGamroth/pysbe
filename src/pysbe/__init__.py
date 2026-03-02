@@ -20,7 +20,17 @@ from pysbe.ir import (
     collect_var_data,
     generate_ir,
 )
-from pysbe.parser import FieldDef, MessageDef, SchemaDef, TypeDef, ValidationError, parse_schema
+from pysbe.parser import (
+    EnumValueDef,
+    FieldDef,
+    MessageDef,
+    SchemaDef,
+    SetChoiceDef,
+    TypeDef,
+    TypeRef,
+    ValidationError,
+    parse_schema,
+)
 from pysbe.runtime import (
     BufferBoundsError,
     BufferTypeError,
@@ -45,6 +55,7 @@ __all__ = [
     "BufferTypeError",
     "CompositeFlyweight",
     "CursorStateError",
+    "EnumValueDef",
     "Encoding",
     "FieldDef",
     "Flyweight",
@@ -59,8 +70,10 @@ __all__ = [
     "PositionPointer",
     "SbeRuntimeError",
     "SchemaDef",
+    "SetChoiceDef",
     "Signal",
     "TypeDef",
+    "TypeRef",
     "ValidationError",
     "VarDataFlyweight",
     "collect_fields",
