@@ -33,7 +33,7 @@ jobs:
 
   publish-pypi:
     needs: build-dist
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     environment:
       name: pypi
