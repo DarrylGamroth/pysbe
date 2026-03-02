@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pysbe.ir import generate_ir
 from pysbe.parser import parse_schema
 
 
@@ -97,16 +98,25 @@ def not_implemented() -> None:
 
 
 def generate_ir_file(schema_path: str | Path) -> dict[str, Any]:
-    """Return minimal schema metadata for Phase 0 CLI plumbing."""
+    """Return schema IR summary for tooling and CLI output."""
 
     schema = Path(schema_path)
     schema_def = parse_schema(schema)
+    schema_ir = generate_ir(schema_def)
 
     return {
         "schema_path": str(schema),
-        "package": schema_def.package_name,
-        "id": schema_def.id,
-        "version": schema_def.version,
-        "byte_order": schema_def.byte_order,
+        "package": schema_ir.package_name,
+        "id": schema_ir.id,
+        "version": schema_ir.version,
+        "byte_order": schema_ir.byte_order,
         "messages": [message.name for message in schema_def.messages],
+        "header_token_count": len(schema_ir.header_tokens),
+        "message_token_counts": {
+            str(message_id): len(tokens)
+            for message_id, tokens in sorted(schema_ir.messages_by_id.items())
+        },
+        "type_token_counts": {
+            name: len(tokens) for name, tokens in sorted(schema_ir.types_by_name.items())
+        },
     }

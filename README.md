@@ -6,11 +6,12 @@
 - high performance via flyweight access patterns,
 - strong NumPy interoperability.
 
-This repository currently contains **Phase 0 scaffolding**:
+This repository currently contains **Phase 0-2 foundations**:
 
 - package structure,
 - CLI entry points,
-- generation API stubs,
+- parser + validation model,
+- IR model, generator, and traversal helpers,
 - fixture management utilities,
 - lint/test/type-check tooling.
 

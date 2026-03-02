@@ -69,3 +69,5 @@ def test_generate_ir_file_extracts_basic_metadata(tmp_path: Path) -> None:
     assert ir["id"] == 7
     assert ir["version"] == 3
     assert ir["messages"] == ["Ping", "Pong"]
+    assert ir["header_token_count"] > 0
+    assert ir["message_token_counts"]["1"] > 0
