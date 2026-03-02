@@ -87,6 +87,12 @@ class TypeDef:
     kind: str
     primitive_type: str | None = None
     length: int = 1
+    since_version: int = 0
+    presence: str = "required"
+    null_value: str | None = None
+    min_value: str | None = None
+    max_value: str | None = None
+    const_value: str | None = None
     members: tuple[TypeRef, ...] = ()
     enum_values: tuple[EnumValueDef, ...] = ()
     set_choices: tuple[SetChoiceDef, ...] = ()
@@ -100,6 +106,12 @@ class FieldDef:
     id: int
     kind: str
     type_name: str | None = None
+    since_version: int = 0
+    presence: str | None = None
+    null_value: str | None = None
+    min_value: str | None = None
+    max_value: str | None = None
+    const_value: str | None = None
     children: tuple[FieldDef, ...] = ()
 
 
@@ -233,6 +245,12 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                     type_node, "primitiveType", context, f"types.{type_name}"
                 )
                 length = _int_attrib(type_node, "length", 1, context, f"types.{type_name}")
+                since_version = _int_attrib(
+                    type_node, "sinceVersion", 0, context, f"types.{type_name}"
+                )
+                presence = type_node.attrib.get("presence", "required")
+                if presence not in {"required", "optional", "constant"}:
+                    context.error(f"types.{type_name}.presence must be required/optional/constant")
                 if primitive_type not in PRIMITIVE_TYPE_NAMES:
                     context.error(
                         f"types.{type_name} uses unknown primitiveType {primitive_type!r}"
@@ -244,10 +262,23 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                     kind=type_tag,
                     primitive_type=primitive_type,
                     length=length,
+                    since_version=since_version,
+                    presence=presence,
+                    null_value=type_node.attrib.get("nullValue"),
+                    min_value=type_node.attrib.get("minValue"),
+                    max_value=type_node.attrib.get("maxValue"),
+                    const_value=type_node.attrib.get("value"),
                 )
             elif type_tag == "composite":
                 members = _parse_composite_members(type_node, context, f"types.{type_name}")
-                type_def = TypeDef(name=type_name, kind=type_tag, members=members)
+                type_def = TypeDef(
+                    name=type_name,
+                    kind=type_tag,
+                    members=members,
+                    since_version=_int_attrib(
+                        type_node, "sinceVersion", 0, context, f"types.{type_name}"
+                    ),
+                )
             elif type_tag == "enum":
                 encoding_type = _required_attrib(
                     type_node, "encodingType", context, f"types.{type_name}"
@@ -262,6 +293,9 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                     kind=type_tag,
                     primitive_type=encoding_type,
                     enum_values=values,
+                    since_version=_int_attrib(
+                        type_node, "sinceVersion", 0, context, f"types.{type_name}"
+                    ),
                 )
             else:
                 encoding_type = _required_attrib(
@@ -277,6 +311,9 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                     kind=type_tag,
                     primitive_type=encoding_type,
                     set_choices=choices,
+                    since_version=_int_attrib(
+                        type_node, "sinceVersion", 0, context, f"types.{type_name}"
+                    ),
                 )
             types_by_name[type_name] = type_def
     return types_by_name
@@ -351,6 +388,7 @@ def _parse_fields(
                     id=field_id,
                     kind=kind,
                     type_name=dimension_type,
+                    since_version=_int_attrib(node, "sinceVersion", 0, context, field_path),
                     children=children,
                 )
             )
@@ -363,7 +401,20 @@ def _parse_fields(
         if kind == "data" and type_def is not None and type_def.kind != "composite":
             context.error(f"{field_path} data field type must reference a composite")
 
-        fields.append(FieldDef(name=name, id=field_id, kind=kind, type_name=type_name))
+        fields.append(
+            FieldDef(
+                name=name,
+                id=field_id,
+                kind=kind,
+                type_name=type_name,
+                since_version=_int_attrib(node, "sinceVersion", 0, context, field_path),
+                presence=node.attrib.get("presence"),
+                null_value=node.attrib.get("nullValue"),
+                min_value=node.attrib.get("minValue"),
+                max_value=node.attrib.get("maxValue"),
+                const_value=node.attrib.get("value"),
+            )
+        )
 
     return tuple(fields)
 

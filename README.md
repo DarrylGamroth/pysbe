@@ -6,14 +6,14 @@
 - high performance via flyweight access patterns,
 - strong NumPy interoperability.
 
-This repository currently contains **Phase 0-4 foundations**:
+This repository currently contains **Phase 0-5 foundations**:
 
 - package structure,
 - CLI entry points,
 - parser + validation model,
 - IR model, generator, and traversal helpers,
 - runtime buffer/primitive/flyweight foundations with NumPy zero-copy adapters,
-- IR-driven Python code emission for fixed-field baseline codecs,
+- IR-driven Python code emission including groups, nested groups, var-data, and version gating,
 - fixture management utilities,
 - lint/test/type-check tooling.
 
