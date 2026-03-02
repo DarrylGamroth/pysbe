@@ -29,7 +29,7 @@ class JavaPrerequisites:
     java: str
     javac: str
     jar_path: Path
-    ref_dir: Path
+    ref_dir: Path | None
 
 
 def _default_ref_dir() -> Path:
@@ -61,13 +61,16 @@ def find_java_prerequisites(ref_dir: str | Path | None = None) -> JavaPrerequisi
 
     java = shutil.which("java")
     javac = shutil.which("javac")
-    resolved_ref_dir = Path(ref_dir) if ref_dir is not None else _default_ref_dir()
-    if java is None or javac is None or not resolved_ref_dir.is_dir():
+    if java is None or javac is None:
         return None
-    jar_path = _find_sbe_jar(resolved_ref_dir)
+
+    resolved_ref_dir = Path(ref_dir) if ref_dir is not None else _default_ref_dir()
+    search_root = resolved_ref_dir if resolved_ref_dir.is_dir() else Path(".")
+    jar_path = _find_sbe_jar(search_root)
     if jar_path is None:
         return None
-    return JavaPrerequisites(java=java, javac=javac, jar_path=jar_path, ref_dir=resolved_ref_dir)
+    ref_dir_value = resolved_ref_dir if resolved_ref_dir.is_dir() else None
+    return JavaPrerequisites(java=java, javac=javac, jar_path=jar_path, ref_dir=ref_dir_value)
 
 
 def _java_literal(value: int | float, primitive_type: str) -> str:
