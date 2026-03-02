@@ -140,3 +140,80 @@ def test_parse_schema_respects_warning_policy(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="valid Python identifier"):
         parse_schema(schema, warnings_fatal=True, suppress_warnings=True)
+
+
+def test_parse_schema_parses_inline_composite_members(tmp_path: Path) -> None:
+    schema = _write_schema(
+        tmp_path,
+        """
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="baseline"
+            id="1"
+            version="0">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <composite name="Comp">
+              <enum name="side" encodingType="uint8">
+                <validValue name="Buy">1</validValue>
+              </enum>
+              <type name="qty" primitiveType="uint32"/>
+            </composite>
+          </types>
+          <sbe:message name="M" id="1">
+            <field name="c" id="1" type="Comp"/>
+          </sbe:message>
+        </sbe:messageSchema>
+        """,
+    )
+
+    parsed = parse_schema(schema)
+    comp = parsed.types_by_name["Comp"]
+
+    assert [member.name for member in comp.members] == ["side", "qty"]
+    assert parsed.types_by_name["Comp.side"].kind == "enum"
+    assert parsed.types_by_name["Comp.qty"].kind == "type"
+
+
+def test_parse_schema_enforces_symbolic_names_when_validate_enabled(tmp_path: Path) -> None:
+    schema = _write_schema(
+        tmp_path,
+        f"""
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="baseline"
+            id="1"
+            version="0">
+          {_header_types()}
+          <sbe:message name="Ping" id="1">
+            <field name="bad-name" id="1" type="uint32"/>
+          </sbe:message>
+        </sbe:messageSchema>
+        """,
+    )
+
+    with pytest.raises(ValidationError, match="symbolicName pattern"):
+        parse_schema(schema, validate=True, suppress_warnings=True)
+
+
+def test_parse_schema_relaxes_symbolic_name_check_when_validate_disabled(tmp_path: Path) -> None:
+    schema = _write_schema(
+        tmp_path,
+        f"""
+        <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+            package="baseline"
+            id="1"
+            version="0">
+          {_header_types()}
+          <sbe:message name="Ping" id="1">
+            <field name="bad-name" id="1" type="uint32"/>
+          </sbe:message>
+        </sbe:messageSchema>
+        """,
+    )
+
+    parsed = parse_schema(schema, validate=False, suppress_warnings=True)
+    assert any("symbolicName pattern" in warning for warning in parsed.warnings)

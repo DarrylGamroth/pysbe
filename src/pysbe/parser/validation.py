@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import keyword
+import re
 import sys
 from dataclasses import dataclass, field
+
+SBE_SYMBOLIC_NAME_RE = re.compile(r"^[A-Za-z_][0-9A-Za-z_]*$")
 
 
 class ValidationError(ValueError):
@@ -17,6 +20,7 @@ class ValidationOptions:
 
     warnings_fatal: bool = False
     suppress_warnings: bool = False
+    strict_names: bool = True
 
 
 @dataclass
@@ -45,3 +49,18 @@ class ValidationContext:
 
         if not name.isidentifier() or keyword.iskeyword(name):
             self.warning(f"{context} name is not a valid Python identifier: {name!r}")
+
+    def validate_symbolic_name(self, name: str, context: str) -> None:
+        """Validate SBE symbolic-name shape according to the reference XSD pattern."""
+
+        if SBE_SYMBOLIC_NAME_RE.match(name):
+            return
+
+        message = (
+            f"{context} name must match SBE symbolicName pattern "
+            f"[A-Za-z_][0-9A-Za-z_]*, got {name!r}"
+        )
+        if self.options.strict_names:
+            self.error(message)
+        else:
+            self.warning(message)

@@ -111,3 +111,12 @@ def test_generate_ir_captures_type_streams_and_component_counts(tmp_path: Path) 
     header_tokens = ir.header_tokens
     assert header_tokens[0].signal == Signal.BEGIN_COMPOSITE
     assert header_tokens[0].component_token_count == len(header_tokens)
+
+    message_tokens = ir.message(1)
+    assert message_tokens is not None
+    seq_encoding = next(
+        token
+        for token in message_tokens
+        if token.signal == Signal.ENCODING and token.name == "uint64"
+    )
+    assert seq_encoding.encoded_length == 8

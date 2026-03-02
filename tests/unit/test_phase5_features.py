@@ -89,7 +89,7 @@ def test_phase5_groups_vardata_and_version_gating(tmp_path: Path) -> None:
     assert dec.seqNum() == 999
     assert dec.optionalValue() == 42
     assert dec.constValue() == 7
-    assert dec.futureValue() is None
+    assert dec.futureValue() == 4_294_967_295
 
     decoded_legs = dec.legs()
     decoded_leg = next(decoded_legs)

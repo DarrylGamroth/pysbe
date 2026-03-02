@@ -245,3 +245,95 @@ Exit criteria:
 3. Implement IR model/generator + parity tests (Phase 2).
 4. Implement runtime primitive/buffer layer with NumPy zero-copy tests (Phase 3).
 
+## Post-Phase Review Findings (2026-03-02, Reference-Verified)
+
+This section captures correctness gaps found after Phases 0-7 and cross-checks each against
+`../simple-binary-encoding` as the authoritative behavior reference.
+
+### Finding 1: `sinceVersion` gating missing for groups and var-data in generated Python codecs
+- Reference answer:
+  - Java group decoder generation applies `actingVersion` guards before reading group dimensions:
+    `sbe-tool/.../generation/java/JavaGenerator.java` around lines 1349-1356.
+  - Java var-data decode paths apply not-present guards using token version:
+    `sbe-tool/.../generation/java/JavaGenerator.java` around lines 1463, 1561, 1619, 1674.
+  - IR group/var-data tokens carry version from field `sinceVersion`:
+    `sbe-tool/.../xml/IrGenerator.java` lines 162-171 and 146.
+- Current pysbe gap:
+  - Generated group/data accessors do not guard on `acting_version`; older payloads can be misparsed.
+- Required change:
+  - Emit version guards for group and var-data accessors in decoder paths.
+  - Define stable not-present behavior for each accessor (empty group cursor, zero-length var-data, or explicit skip).
+  - Add equivalent safety checks on encoder methods for fields not present in acting version.
+- Tests to add:
+  - Decode payload encoded with older acting version where group/data fields are absent.
+  - Ensure subsequent fields decode correctly (no cursor desync).
+
+### Finding 2: Composite parser drops inline members when `type` attribute is absent
+- Reference answer:
+  - Composite parsing supports inline `type`, `enum`, `set`, `composite`, and `ref` members:
+    `sbe-tool/.../xml/CompositeType.java` lines 403-425.
+  - Invalid member kinds are rejected (not silently ignored):
+    `CompositeType.java` lines 477-484.
+- Current pysbe gap:
+  - Parser silently skips members if `type_name` is absent, which can shrink composite layout incorrectly.
+- Required change:
+  - Parse inline composite member declarations instead of dropping them.
+  - Reject unresolved/invalid members with `ValidationError` instead of continuing.
+- Tests to add:
+  - Inline enum/set/composite member schema parses and preserves member order/size.
+  - Unknown or unresolved member raises validation failure.
+
+### Finding 3: IR `encoded_length` is incorrect for primitive/type tokens
+- Reference answer:
+  - IR generator sets token size from actual encoded type length:
+    `sbe-tool/.../xml/IrGenerator.java` lines 380-384 and 433.
+  - Composite begin tokens also carry full encoded length:
+    `IrGenerator.java` line 219.
+- Current pysbe gap:
+  - Primitive/type IR tokens are emitted with `encoded_length = 1` regardless of true width/array length.
+- Required change:
+  - Compute `encoded_length` from resolved primitive size × length for primitive/type tokens.
+  - Ensure enum/set/composite tokens expose reference-consistent sizes.
+- Tests to add:
+  - IR assertions for `uint32`, `int64`, fixed-length arrays, and composite members.
+
+### Finding 4: Name handling differs from reference constraints and can lead to Python method collisions
+- Reference answer:
+  - SBE XSD constrains symbolic names to identifier-safe pattern:
+    `sbe-tool/src/main/resources/fpl/sbe.xsd` lines 376-381.
+  - Java generator handles keywords explicitly via append-token policy:
+    `sbe-tool/.../generation/java/JavaUtil.java` lines 151-187.
+- Current pysbe gap:
+  - Parser currently warns on invalid Python identifiers but still generates code.
+  - Codegen sanitization can map multiple source names to one Python method name with no collision check.
+- Required change:
+  - Add strict symbolic-name validation mode aligned with SBE XSD constraints.
+  - Add post-sanitization collision detection for generated identifiers and fail with clear diagnostics.
+- Tests to add:
+  - Invalid symbolic names rejected under strict validation.
+  - Colliding sanitized identifiers detected with deterministic error message.
+
+### Finding 5: Optional/null behavior policy is not fully defined in generated Python API
+- Reference answer:
+  - Java flyweights expose raw values plus `NullValue/MinValue/MaxValue` metadata:
+    `sbe-tool/.../generation/java/JavaGenerator.java` lines 2591-2622.
+  - For fields not present due to acting-version, Java returns applicable null/default values:
+    `JavaGenerator.java` lines 2698-2712 and related array/string guards at 2714-2756.
+- Current pysbe gap:
+  - `nullValue` is parsed but not surfaced in generated accessor API.
+  - Not-present behavior is implemented for scalar fields only; array/group/var-data behavior is inconsistent.
+- Required change:
+  - Define and document explicit parity policy:
+    - Default flyweight API returns wire-level sentinel values (reference-compatible), and/or
+    - Optional convenience helpers expose Pythonic `None` conversion.
+  - Generate null metadata helpers and consistent not-present behavior across field kinds.
+- Tests to add:
+  - Optional field null sentinel round-trip.
+  - Since-version not-present behavior for scalar/array/group/var-data accessors.
+
+## Phase 8: Parity and Robustness Hardening
+1. Fix IR sizing/parsing correctness gaps (Findings 2-3) and land regression tests.
+2. Implement full version gating for group/var-data plus cursor-safety tests (Finding 1).
+3. Add strict naming/collision validation with clear diagnostics (Finding 4).
+4. Finalize optional/null API policy and encode it in generated methods + docs (Finding 5).
+5. Run cross-language fixture checks against Java reference after each sub-step.

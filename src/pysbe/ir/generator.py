@@ -17,6 +17,20 @@ BEGIN_END_SIGNALS: dict[Signal, Signal] = {
     Signal.BEGIN_SET: Signal.END_SET,
 }
 
+PRIMITIVE_TYPE_SIZES: dict[str, int] = {
+    "char": 1,
+    "int8": 1,
+    "uint8": 1,
+    "int16": 2,
+    "uint16": 2,
+    "int32": 4,
+    "uint32": 4,
+    "float": 4,
+    "int64": 8,
+    "uint64": 8,
+    "double": 8,
+}
+
 
 def _encoding_for_type(type_def: TypeDef | None, *, byte_order: str) -> Encoding:
     if type_def is None:
@@ -47,6 +61,13 @@ def _clone_tokens(tokens: list[IrToken]) -> list[IrToken]:
     return [replace(token) for token in tokens]
 
 
+def _encoded_length_for_primitive(primitive_name: str, length: int) -> int:
+    size = PRIMITIVE_TYPE_SIZES.get(primitive_name)
+    if size is None:
+        return 0
+    return size * length
+
+
 def _emit_type_tokens(
     schema: SchemaDef,
     type_name: str,
@@ -67,11 +88,12 @@ def _emit_type_tokens(
     type_def = schema.types_by_name.get(type_name)
     if type_def is None:
         # Primitive type
+        encoded_length = _encoded_length_for_primitive(type_name, 1)
         tokens = [
             IrToken(
                 signal=Signal.ENCODING,
                 name=type_name,
-                encoded_length=1,
+                encoded_length=encoded_length,
                 encoding=Encoding(
                     primitive_type=PrimitiveType.from_name(type_name),
                     byte_order=byte_order,
@@ -82,12 +104,14 @@ def _emit_type_tokens(
         return tokens
 
     if type_def.kind in {"primitive", "type"}:
+        primitive_name = type_def.primitive_type or type_def.name
+        encoded_length = _encoded_length_for_primitive(primitive_name, type_def.length)
         tokens = [
             IrToken(
                 signal=Signal.ENCODING,
                 name=type_def.name,
                 referenced_name=type_def.name,
-                encoded_length=1,
+                encoded_length=encoded_length,
                 encoding=_encoding_for_type(type_def, byte_order=byte_order),
             )
         ]

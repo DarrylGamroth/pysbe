@@ -140,29 +140,120 @@ class SchemaDef:
 
 
 def _parse_composite_members(
-    node: ET.Element, context: ValidationContext, path: str
+    node: ET.Element,
+    *,
+    owner_type_name: str,
+    types_by_name: dict[str, TypeDef],
+    context: ValidationContext,
+    path: str,
 ) -> tuple[TypeRef, ...]:
     members: list[TypeRef] = []
     names_seen: set[str] = set()
     for member in node:
         member_tag = _tag_name(member.tag)
+        if member_tag in {"data", "group"}:
+            context.error(f"{path} member kind {member_tag!r} is not valid within composite")
         if member_tag not in {"type", "enum", "set", "composite", "ref"}:
             continue
 
         member_name = _required_attrib(member, "name", context, path)
+        context.validate_symbolic_name(member_name, "composite member")
+        context.validate_identifier(member_name, "composite member")
         if member_name in names_seen:
             context.error(f"{path} contains duplicate member name {member_name!r}")
         names_seen.add(member_name)
 
-        type_name = member.attrib.get("type")
-        length = _int_attrib(member, "length", 1, context, path)
-        if member_tag == "type":
-            type_name = member.attrib.get("primitiveType")
-            length = _int_attrib(member, "length", 1, context, path)
-        if type_name is None:
-            # In-schema nested type declarations can omit `type`; only keep refs we can resolve.
+        member_path = f"{path}.{member_name}"
+        member_length = _int_attrib(member, "length", 1, context, member_path)
+        if member_length <= 0:
+            context.error(f"{member_path}.length must be >= 1")
+
+        if member_tag == "ref":
+            referenced_type = _required_attrib(member, "type", context, member_path)
+            members.append(
+                TypeRef(name=member_name, type_name=referenced_type, length=member_length)
+            )
             continue
-        members.append(TypeRef(name=member_name, type_name=type_name, length=length))
+
+        synthetic_type_name = f"{owner_type_name}.{member_name}"
+        if synthetic_type_name in types_by_name:
+            context.error(
+                f"{member_path} resolves to duplicate synthetic type {synthetic_type_name!r}"
+            )
+
+        if member_tag == "type":
+            primitive_type = _required_attrib(member, "primitiveType", context, member_path)
+            if primitive_type not in PRIMITIVE_TYPE_NAMES:
+                context.error(f"{member_path} uses unknown primitiveType {primitive_type!r}")
+            inline_length = _int_attrib(member, "length", 1, context, member_path)
+            if inline_length <= 0:
+                context.error(f"{member_path}.length must be >= 1")
+            presence = member.attrib.get("presence", "required")
+            if presence not in {"required", "optional", "constant"}:
+                context.error(f"{member_path}.presence must be required/optional/constant")
+            types_by_name[synthetic_type_name] = TypeDef(
+                name=synthetic_type_name,
+                kind="type",
+                primitive_type=primitive_type,
+                length=inline_length,
+                since_version=_int_attrib(member, "sinceVersion", 0, context, member_path),
+                presence=presence,
+                null_value=member.attrib.get("nullValue"),
+                min_value=member.attrib.get("minValue"),
+                max_value=member.attrib.get("maxValue"),
+                const_value=member.attrib.get("value"),
+            )
+            members.append(TypeRef(name=member_name, type_name=synthetic_type_name, length=1))
+            continue
+
+        if member_tag == "enum":
+            encoding_type = _required_attrib(member, "encodingType", context, member_path)
+            if encoding_type not in PRIMITIVE_TYPE_NAMES:
+                context.error(f"{member_path} uses unknown encodingType {encoding_type!r}")
+            types_by_name[synthetic_type_name] = TypeDef(
+                name=synthetic_type_name,
+                kind="enum",
+                primitive_type=encoding_type,
+                enum_values=_parse_enum_values(member, context, member_path),
+                since_version=_int_attrib(member, "sinceVersion", 0, context, member_path),
+            )
+            members.append(
+                TypeRef(name=member_name, type_name=synthetic_type_name, length=member_length)
+            )
+            continue
+
+        if member_tag == "set":
+            encoding_type = _required_attrib(member, "encodingType", context, member_path)
+            if encoding_type not in PRIMITIVE_TYPE_NAMES:
+                context.error(f"{member_path} uses unknown encodingType {encoding_type!r}")
+            types_by_name[synthetic_type_name] = TypeDef(
+                name=synthetic_type_name,
+                kind="set",
+                primitive_type=encoding_type,
+                set_choices=_parse_set_choices(member, context, member_path),
+                since_version=_int_attrib(member, "sinceVersion", 0, context, member_path),
+            )
+            members.append(
+                TypeRef(name=member_name, type_name=synthetic_type_name, length=member_length)
+            )
+            continue
+
+        # inline composite
+        types_by_name[synthetic_type_name] = TypeDef(
+            name=synthetic_type_name,
+            kind="composite",
+            members=_parse_composite_members(
+                member,
+                owner_type_name=synthetic_type_name,
+                types_by_name=types_by_name,
+                context=context,
+                path=member_path,
+            ),
+            since_version=_int_attrib(member, "sinceVersion", 0, context, member_path),
+        )
+        members.append(
+            TypeRef(name=member_name, type_name=synthetic_type_name, length=member_length)
+        )
     return tuple(members)
 
 
@@ -222,6 +313,84 @@ def _parse_set_choices(
     return tuple(choices)
 
 
+def _parse_type_node(
+    type_node: ET.Element,
+    *,
+    type_name: str,
+    types_by_name: dict[str, TypeDef],
+    context: ValidationContext,
+    path: str,
+) -> TypeDef:
+    type_tag = _tag_name(type_node.tag)
+
+    if type_tag == "type":
+        primitive_type = _required_attrib(type_node, "primitiveType", context, path)
+        length = _int_attrib(type_node, "length", 1, context, path)
+        since_version = _int_attrib(type_node, "sinceVersion", 0, context, path)
+        presence = type_node.attrib.get("presence", "required")
+        if presence not in {"required", "optional", "constant"}:
+            context.error(f"{path}.presence must be required/optional/constant")
+        if primitive_type not in PRIMITIVE_TYPE_NAMES:
+            context.error(f"{path} uses unknown primitiveType {primitive_type!r}")
+        if length <= 0:
+            context.error(f"{path}.length must be >= 1")
+        return TypeDef(
+            name=type_name,
+            kind=type_tag,
+            primitive_type=primitive_type,
+            length=length,
+            since_version=since_version,
+            presence=presence,
+            null_value=type_node.attrib.get("nullValue"),
+            min_value=type_node.attrib.get("minValue"),
+            max_value=type_node.attrib.get("maxValue"),
+            const_value=type_node.attrib.get("value"),
+        )
+
+    if type_tag == "composite":
+        members = _parse_composite_members(
+            type_node,
+            owner_type_name=type_name,
+            types_by_name=types_by_name,
+            context=context,
+            path=path,
+        )
+        return TypeDef(
+            name=type_name,
+            kind=type_tag,
+            members=members,
+            since_version=_int_attrib(type_node, "sinceVersion", 0, context, path),
+        )
+
+    if type_tag == "enum":
+        encoding_type = _required_attrib(type_node, "encodingType", context, path)
+        if encoding_type not in PRIMITIVE_TYPE_NAMES:
+            context.error(f"{path} uses unknown encodingType {encoding_type!r}")
+        values = _parse_enum_values(type_node, context, path)
+        return TypeDef(
+            name=type_name,
+            kind=type_tag,
+            primitive_type=encoding_type,
+            enum_values=values,
+            since_version=_int_attrib(type_node, "sinceVersion", 0, context, path),
+        )
+
+    if type_tag == "set":
+        encoding_type = _required_attrib(type_node, "encodingType", context, path)
+        if encoding_type not in PRIMITIVE_TYPE_NAMES:
+            context.error(f"{path} uses unknown encodingType {encoding_type!r}")
+        choices = _parse_set_choices(type_node, context, path)
+        return TypeDef(
+            name=type_name,
+            kind=type_tag,
+            primitive_type=encoding_type,
+            set_choices=choices,
+            since_version=_int_attrib(type_node, "sinceVersion", 0, context, path),
+        )
+
+    raise ValueError(f"unsupported type tag: {type_tag!r}")
+
+
 def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, TypeDef]:
     types_by_name: dict[str, TypeDef] = {
         primitive: TypeDef(name=primitive, kind="primitive", primitive_type=primitive, length=1)
@@ -236,85 +405,17 @@ def _parse_types(root: ET.Element, context: ValidationContext) -> dict[str, Type
                 continue
 
             type_name = _required_attrib(type_node, "name", context, "types")
+            context.validate_symbolic_name(type_name, "type")
             context.validate_identifier(type_name, "type")
             if type_name in types_by_name:
                 context.error(f"types contains duplicate type name {type_name!r}")
-
-            if type_tag == "type":
-                primitive_type = _required_attrib(
-                    type_node, "primitiveType", context, f"types.{type_name}"
-                )
-                length = _int_attrib(type_node, "length", 1, context, f"types.{type_name}")
-                since_version = _int_attrib(
-                    type_node, "sinceVersion", 0, context, f"types.{type_name}"
-                )
-                presence = type_node.attrib.get("presence", "required")
-                if presence not in {"required", "optional", "constant"}:
-                    context.error(f"types.{type_name}.presence must be required/optional/constant")
-                if primitive_type not in PRIMITIVE_TYPE_NAMES:
-                    context.error(
-                        f"types.{type_name} uses unknown primitiveType {primitive_type!r}"
-                    )
-                if length <= 0:
-                    context.error(f"types.{type_name}.length must be >= 1")
-                type_def = TypeDef(
-                    name=type_name,
-                    kind=type_tag,
-                    primitive_type=primitive_type,
-                    length=length,
-                    since_version=since_version,
-                    presence=presence,
-                    null_value=type_node.attrib.get("nullValue"),
-                    min_value=type_node.attrib.get("minValue"),
-                    max_value=type_node.attrib.get("maxValue"),
-                    const_value=type_node.attrib.get("value"),
-                )
-            elif type_tag == "composite":
-                members = _parse_composite_members(type_node, context, f"types.{type_name}")
-                type_def = TypeDef(
-                    name=type_name,
-                    kind=type_tag,
-                    members=members,
-                    since_version=_int_attrib(
-                        type_node, "sinceVersion", 0, context, f"types.{type_name}"
-                    ),
-                )
-            elif type_tag == "enum":
-                encoding_type = _required_attrib(
-                    type_node, "encodingType", context, f"types.{type_name}"
-                )
-                if encoding_type not in PRIMITIVE_TYPE_NAMES:
-                    context.error(
-                        f"types.{type_name} uses unknown encodingType {encoding_type!r}"
-                    )
-                values = _parse_enum_values(type_node, context, f"types.{type_name}")
-                type_def = TypeDef(
-                    name=type_name,
-                    kind=type_tag,
-                    primitive_type=encoding_type,
-                    enum_values=values,
-                    since_version=_int_attrib(
-                        type_node, "sinceVersion", 0, context, f"types.{type_name}"
-                    ),
-                )
-            else:
-                encoding_type = _required_attrib(
-                    type_node, "encodingType", context, f"types.{type_name}"
-                )
-                if encoding_type not in PRIMITIVE_TYPE_NAMES:
-                    context.error(
-                        f"types.{type_name} uses unknown encodingType {encoding_type!r}"
-                    )
-                choices = _parse_set_choices(type_node, context, f"types.{type_name}")
-                type_def = TypeDef(
-                    name=type_name,
-                    kind=type_tag,
-                    primitive_type=encoding_type,
-                    set_choices=choices,
-                    since_version=_int_attrib(
-                        type_node, "sinceVersion", 0, context, f"types.{type_name}"
-                    ),
-                )
+            type_def = _parse_type_node(
+                type_node,
+                type_name=type_name,
+                types_by_name=types_by_name,
+                context=context,
+                path=f"types.{type_name}",
+            )
             types_by_name[type_name] = type_def
     return types_by_name
 
@@ -351,6 +452,7 @@ def _parse_fields(
         current_phase = phase
 
         name = _required_attrib(node, "name", context, path)
+        context.validate_symbolic_name(name, "field")
         context.validate_identifier(name, "field")
         field_path = f"{path}.{name}"
 
@@ -432,6 +534,7 @@ def _parse_messages(
         if _tag_name(node.tag) != "message":
             continue
         name = _required_attrib(node, "name", context, "message")
+        context.validate_symbolic_name(name, "message")
         context.validate_identifier(name, "message")
         message_path = f"message.{name}"
         message_id = _int_attrib(node, "id", -1, context, message_path)
@@ -488,6 +591,7 @@ def parse_schema(
         ValidationOptions(
             warnings_fatal=warnings_fatal,
             suppress_warnings=suppress_warnings,
+            strict_names=validate,
         )
     )
 

@@ -21,6 +21,34 @@ PRIMITIVE_SIZE: dict[str, int] = {
     "double": 8,
 }
 
+PRIMITIVE_NULL_VALUE: dict[str, str] = {
+    "char": "0",
+    "int8": "-128",
+    "uint8": "255",
+    "int16": "-32768",
+    "uint16": "65535",
+    "int32": "-2147483648",
+    "uint32": "4294967295",
+    "float": "float('nan')",
+    "int64": "-9223372036854775808",
+    "uint64": "18446744073709551615",
+    "double": "float('nan')",
+}
+
+NUMPY_DTYPE_LITERAL: dict[str, str] = {
+    "char": "np.uint8",
+    "int8": "np.int8",
+    "uint8": "np.uint8",
+    "int16": "np.int16",
+    "uint16": "np.uint16",
+    "int32": "np.int32",
+    "uint32": "np.uint32",
+    "float": "np.float32",
+    "int64": "np.int64",
+    "uint64": "np.uint64",
+    "double": "np.float64",
+}
+
 @dataclass(frozen=True)
 class ResolvedType:
     """Resolved type metadata for code generation."""
@@ -54,6 +82,72 @@ class ContainerLayout:
 
 def _method_name(name: str) -> str:
     return sanitize_identifier(name)
+
+
+def _default_null_literal(primitive_type: str) -> str:
+    return PRIMITIVE_NULL_VALUE[primitive_type]
+
+
+def _not_present_literal(meta: FieldMeta, primitive_type: str) -> str:
+    explicit_null = _python_value_literal(meta.null_value, primitive_type)
+    if explicit_null is not None:
+        return explicit_null
+    return _default_null_literal(primitive_type)
+
+
+def _field_accessor_method_names(schema: SchemaDef, field: FieldDef, *, encoder: bool) -> list[str]:
+    method = _method_name(field.name)
+    if field.kind == "group":
+        return [f"{method}_begin" if encoder else method]
+    if field.kind == "data":
+        if encoder:
+            return [f"{method}_set"]
+        return [method, f"{method}_as_str"]
+
+    if field.type_name is None:
+        raise ValueError(f"field {field.name!r} missing type")
+    resolved = _resolve_type(schema, field.type_name)
+    if resolved.kind in {"primitive", "enum", "set"} and resolved.length == 1:
+        names = [method]
+        if encoder:
+            names.append(f"{method}_set")
+        if resolved.kind == "set":
+            names.append(f"{method}_has")
+        if field.type_name in schema.types_by_name:
+            type_def = schema.types_by_name[field.type_name]
+            meta = _field_meta(schema, field, type_def)
+            if resolved.primitive_type is not None and meta.presence == "optional":
+                names.append(f"{method}_is_null")
+                names.append(f"{method}_or_none")
+        return names
+    if resolved.kind == "primitive":
+        names = [method]
+        if encoder:
+            names.append(f"{method}_set")
+            if resolved.primitive_type == "char":
+                names.append(f"{method}_set_str")
+        if resolved.primitive_type == "char":
+            names.append(f"{method}_as_str")
+        return names
+    if resolved.kind == "composite":
+        return [method]
+    raise ValueError(f"unsupported field type kind: {resolved.kind!r}")
+
+
+def _assert_no_method_collisions(
+    methods: list[str],
+    *,
+    class_label: str,
+    reserved: set[str],
+) -> None:
+    seen: set[str] = set(reserved)
+    for method in methods:
+        if method in seen:
+            raise ValueError(
+                f"{class_label} contains duplicate generated method name {method!r}. "
+                "Rename schema fields to avoid sanitized-name collisions."
+            )
+        seen.add(method)
 
 
 def _resolve_type(schema: SchemaDef, type_name: str) -> ResolvedType:
@@ -206,11 +300,12 @@ def _emit_scalar_accessor(
     const_literal = _python_value_literal(meta.const_value, primitive_type)
     min_literal = _python_value_literal(meta.min_value, primitive_type)
     max_literal = _python_value_literal(meta.max_value, primitive_type)
+    null_literal = _not_present_literal(meta, primitive_type)
 
     lines.append(f"    def {method}(self):")
     if meta.since_version > 0:
         lines.append(f"        if self.acting_version < {meta.since_version}:")
-        lines.append("            return None")
+        lines.append(f"            return {null_literal}")
     if meta.presence == "constant" and const_literal is not None:
         lines.append(f"        return {const_literal}")
     else:
@@ -219,6 +314,19 @@ def _emit_scalar_accessor(
             f"self.buffer, {offset_expr}, {primitive_type!r}, byte_order=BYTE_ORDER)"
         )
     lines.append("")
+
+    if meta.presence == "optional":
+        lines.append(f"    def {method}_is_null(self):")
+        lines.append(f"        value = self.{method}()")
+        if primitive_type in {"float", "double"}:
+            lines.append("        return np.isnan(value)")
+        else:
+            lines.append(f"        return value == {null_literal}")
+        lines.append("")
+        lines.append(f"    def {method}_or_none(self):")
+        lines.append(f"        value = self.{method}()")
+        lines.append(f"        return None if self.{method}_is_null() else value")
+        lines.append("")
 
     if not encoder:
         return
@@ -231,6 +339,9 @@ def _emit_scalar_accessor(
         lines.append("        raise ValueError('cannot set constant field')")
         lines.append("")
         return
+    if meta.presence == "optional":
+        lines.append("        if value is None:")
+        lines.append(f"            value = {null_literal}")
     if min_literal is not None:
         lines.append(f"        if value < {min_literal}:")
         lines.append("            raise ValueError('value below minValue')")
@@ -257,7 +368,7 @@ def _emit_primitive_array_accessor(
     lines.append(f"    def {method}(self):")
     if meta.since_version > 0:
         lines.append(f"        if self.acting_version < {meta.since_version}:")
-        lines.append("            return None")
+        lines.append(f"            return np.empty(0, dtype={NUMPY_DTYPE_LITERAL[primitive_type]})")
     lines.append(
         "        return view_primitive_array("
         f"self.buffer, {offset_expr}, {primitive_type!r}, {length}, "
@@ -266,9 +377,10 @@ def _emit_primitive_array_accessor(
     lines.append("")
     if encoder:
         lines.append(f"    def {method}_set(self, values):")
+        if meta.since_version > 0:
+            lines.append(f"        if self.acting_version < {meta.since_version}:")
+            lines.append("            raise ValueError('field not present in acting version')")
         lines.append(f"        target = self.{method}()")
-        lines.append("        if target is None:")
-        lines.append("            raise ValueError('field not present in acting version')")
         lines.append("        np.copyto(target, np.asarray(values, dtype=target.dtype))")
         lines.append("")
         if primitive_type == "char":
@@ -281,8 +393,9 @@ def _emit_primitive_array_accessor(
     if primitive_type == "char":
         lines.append(f"    def {method}_as_str(self):")
         lines.append(f"        value = self.{method}()")
-        lines.append("        if value is None:")
-        lines.append("            return None")
+        if meta.since_version > 0:
+            lines.append(f"        if self.acting_version < {meta.since_version}:")
+            lines.append("            return ''")
         lines.append("        return bytes(value).decode('ascii', errors='ignore').rstrip('\\x00')")
         lines.append("")
 
@@ -317,8 +430,6 @@ def _emit_field_accessor(
         if resolved.kind == "set":
             lines.append(f"    def {method}_has(self, flag):")
             lines.append(f"        value = self.{method}()")
-            lines.append("        if value is None:")
-            lines.append("            return False")
             lines.append("        return bool(value & flag)")
             lines.append("")
         return
@@ -362,11 +473,16 @@ def _emit_data_accessor(
 ) -> None:
     if field.type_name is None:
         raise ValueError(f"data field {field.name!r} missing type")
+    type_def = schema.types_by_name[field.type_name]
+    meta = _field_meta(schema, field, type_def)
     method = _method_name(field.name)
     length_type = _var_data_length_type(schema, field.type_name)
 
     if encoder:
         lines.append(f"    def {method}_set(self, data):")
+        if meta.since_version > 0:
+            lines.append(f"        if self.acting_version < {meta.since_version}:")
+            lines.append("            raise ValueError('field not present in acting version')")
         lines.append("        payload = data.encode('utf-8') if isinstance(data, str) else data")
         lines.append(
             "        next_pos = write_vardata("
@@ -378,6 +494,9 @@ def _emit_data_accessor(
         return
 
     lines.append(f"    def {method}(self):")
+    if meta.since_version > 0:
+        lines.append(f"        if self.acting_version < {meta.since_version}:")
+        lines.append("            return memoryview(b'')")
     lines.append(
         "        data, next_pos = read_vardata("
         f"self.buffer, self.position_ptr.get(), length_type={length_type!r}, "
@@ -387,6 +506,9 @@ def _emit_data_accessor(
     lines.append("        return data")
     lines.append("")
     lines.append(f"    def {method}_as_str(self):")
+    if meta.since_version > 0:
+        lines.append(f"        if self.acting_version < {meta.since_version}:")
+        lines.append("            return ''")
     lines.append(f"        return bytes(self.{method}()).decode('utf-8', errors='ignore')")
     lines.append("")
 
@@ -409,6 +531,26 @@ def _emit_group_codecs(
     dec_name = _group_class_name(prefix, group_field.name, encoder=False)
     dim_block_type, dim_count_type, _, dim_size = _dimension_spec(schema, group_field.type_name)
     layout = _container_layout(schema, group_field.children)
+
+    enc_methods: list[str] = []
+    dec_methods: list[str] = []
+    for field, _ in layout.fixed_fields:
+        enc_methods.extend(_field_accessor_method_names(schema, field, encoder=True))
+        dec_methods.extend(_field_accessor_method_names(schema, field, encoder=False))
+    for child in group_field.children:
+        if child.kind in {"group", "data"}:
+            enc_methods.extend(_field_accessor_method_names(schema, child, encoder=True))
+            dec_methods.extend(_field_accessor_method_names(schema, child, encoder=False))
+    _assert_no_method_collisions(
+        enc_methods,
+        class_label=enc_name,
+        reserved={"__init__", "next", "__next__", "__iter__"},
+    )
+    _assert_no_method_collisions(
+        dec_methods,
+        class_label=dec_name,
+        reserved={"__init__", "__next__", "__iter__"},
+    )
 
     # Nested group classes first.
     for child in group_field.children:
@@ -468,8 +610,14 @@ def _emit_group_codecs(
                 schema, child.type_name
             )
             child_layout = _container_layout(schema, child.children)
+            child_meta = _field_meta(schema, child, schema.types_by_name[child.type_name])
             method = _method_name(child.name)
             enc_lines.append(f"    def {method}_begin(self, count):")
+            if child_meta.since_version > 0:
+                enc_lines.append(f"        if self.acting_version < {child_meta.since_version}:")
+                enc_lines.append(
+                    "            raise ValueError('field not present in acting version')"
+                )
             enc_lines.append("        position = self.position_ptr.get()")
             enc_lines.append(
                 "        write_primitive("
@@ -538,8 +686,16 @@ def _emit_group_codecs(
             child_block_type, child_count_type, _, child_dim_size = _dimension_spec(
                 schema, child.type_name
             )
+            child_meta = _field_meta(schema, child, schema.types_by_name[child.type_name])
+            child_layout = _container_layout(schema, child.children)
             method = _method_name(child.name)
             dec_lines.append(f"    def {method}(self):")
+            if child_meta.since_version > 0:
+                dec_lines.append(f"        if self.acting_version < {child_meta.since_version}:")
+                dec_lines.append(
+                    f"            return {child_dec_name}(self.buffer, self.position_ptr, 0, "
+                    f"{child_layout.block_length}, self.acting_version)"
+                )
             dec_lines.append("        position = self.position_ptr.get()")
             dec_lines.append(
                 "        block_length = read_primitive("
@@ -565,6 +721,23 @@ def _emit_group_codecs(
 def _emit_composite_codec(schema: SchemaDef, type_def: TypeDef, *, encoder: bool) -> str:
     suffix = "Encoder" if encoder else "Decoder"
     class_label = f"{class_name(type_def.name)}{suffix}"
+    method_names: list[str] = []
+    for member_name, type_name, _, _ in _composite_member_layout(schema, type_def):
+        field = FieldDef(name=member_name, id=-1, kind="field", type_name=type_name)
+        resolved = _resolve_type(schema, type_name)
+        if resolved.kind == "primitive" and resolved.length > 1:
+            method = _method_name(member_name)
+            method_names.append(method)
+            if encoder:
+                method_names.append(f"{method}_set")
+                if resolved.primitive_type == "char":
+                    method_names.append(f"{method}_set_str")
+            if resolved.primitive_type == "char":
+                method_names.append(f"{method}_as_str")
+        else:
+            method_names.extend(_field_accessor_method_names(schema, field, encoder=encoder))
+    _assert_no_method_collisions(method_names, class_label=class_label, reserved={"__init__"})
+
     lines = [
         f"class {class_label}:",
         "    def __init__(self, buffer, offset=0, acting_version=SCHEMA_VERSION):",
@@ -611,6 +784,19 @@ def _emit_message_codec(
     suffix = "Encoder" if encoder else "Decoder"
     class_label = f"{class_name(message.name)}{suffix}"
     layout = _container_layout(schema, message.fields)
+    method_names: list[str] = []
+    for field, _ in layout.fixed_fields:
+        method_names.extend(_field_accessor_method_names(schema, field, encoder=encoder))
+    for field in message.fields:
+        if field.kind in {"group", "data"}:
+            method_names.extend(_field_accessor_method_names(schema, field, encoder=encoder))
+    reserved = {"__init__", "rewind"}
+    if encoder:
+        reserved.update({"wrap_and_apply_header"})
+    else:
+        reserved.update({"wrap"})
+    _assert_no_method_collisions(method_names, class_label=class_label, reserved=reserved)
+
     lines = [
         f"class {class_label}:",
         f"    TEMPLATE_ID = {message.id}",
@@ -706,8 +892,16 @@ def _emit_message_codec(
             )
             child_layout = _container_layout(schema, field.children)
             method = _method_name(field.name)
+            if field.type_name is None:
+                raise ValueError("group missing dimension type")
+            group_meta = _field_meta(schema, field, schema.types_by_name[field.type_name])
             if encoder:
                 lines.append(f"    def {method}_begin(self, count):")
+                if group_meta.since_version > 0:
+                    lines.append(f"        if self.acting_version < {group_meta.since_version}:")
+                    lines.append(
+                        "            raise ValueError('field not present in acting version')"
+                    )
                 lines.append("        position = self.position_ptr.get()")
                 lines.append(
                     "        write_primitive("
@@ -727,6 +921,12 @@ def _emit_message_codec(
                 lines.append("")
             else:
                 lines.append(f"    def {method}(self):")
+                if group_meta.since_version > 0:
+                    lines.append(f"        if self.acting_version < {group_meta.since_version}:")
+                    lines.append(
+                        f"            return {group_dec_name}(self.buffer, self.position_ptr, 0, "
+                        f"{child_layout.block_length}, self.acting_version)"
+                    )
                 lines.append("        position = self.position_ptr.get()")
                 lines.append(
                     "        block_length = read_primitive("
