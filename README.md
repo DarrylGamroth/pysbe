@@ -6,12 +6,13 @@
 - high performance via flyweight access patterns,
 - strong NumPy interoperability.
 
-This repository currently contains **Phase 0-2 foundations**:
+This repository currently contains **Phase 0-3 foundations**:
 
 - package structure,
 - CLI entry points,
 - parser + validation model,
 - IR model, generator, and traversal helpers,
+- runtime buffer/primitive/flyweight foundations with NumPy zero-copy adapters,
 - fixture management utilities,
 - lint/test/type-check tooling.
 
